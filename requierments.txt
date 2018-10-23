@@ -1,0 +1,21 @@
+filelock
+numpy>=1.15,<1.16
+opencv-python
+opencv-contrib-python>=3.4.2,<3.5
+pandas>=0.23,<0.24
+pyyaml>=3.13,<4
+scipy>=1.1.0,<2
+sklearn
+ipdb
+matplotlib
+
+# TODO: We should preinstall these in the pw container, because they're big
+torch==0.4.1
+torchvision==0.2.1
+tensorboardX
+
+pyOpenSSL
+ndg-httpsclient
+
+
+
