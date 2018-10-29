@@ -8,6 +8,7 @@ scipy>=1.1.0,<2
 sklearn
 ipdb
 matplotlib
+pytest
 
 # TODO: We should preinstall these in the pw container, because they're big
 torch==0.4.1
