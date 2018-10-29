@@ -1,3 +1,4 @@
+import torch.nn as nn
 import PIL
 import shutil
 import itertools
@@ -44,26 +45,27 @@ class PredictionCollector(object):
         if criterion is not None:
             self.criterion = criterion
         else:
-            self.criterion = nn.BCEWithLogitsLoss()):
+            self.criterion = nn.BCELoss(reduction='none')
 
     def add(self, tagids, predictions,labels=None):
         tmp = pd.DataFrame(index=tagids,columns=self.output.keys())
         tmp.loc[tagids]=predictions
         self.output = self.output.append(tmp)
-        print 'current predcition size = ', self.output.shape
         if labels is not None:
             tmp = pd.DataFrame(index=tagids,columns=self.output.keys())
             tmp.loc[tagids]=labels
-            self.labels = self.output.append(tmp)
+            self.labels = self.labels.append(tmp)
 
     def calc_map(self):
-        y_true = self.lables.values
-        y_score = self.output.values
+        y_true = self.labels.values.astype(int)
+        y_score = self.output.values.astype(float)
         mask = np.count_nonzero(y_true,axis=0)>0
-        return MAP(y_true[:,mask],y_score[:,mask],average=None)
+        return MAP(y_true[:,mask],y_score[:,mask],average=None), self.output.keys()[mask]
 
-    def calc_loss(self, criterion):
-        return self.criterion(nutputs, Y)
+    def calc_loss(self):
+        ret = self.criterion(torch.from_numpy(self.output.values.astype(float)), torch.from_numpy(self.labels.values.astype(float))).mean(0)
+        assert len(ret)==37
+        return ret
 
     def save(self, csv_filename):
         by_prob = pd.DataFrame(index=self.output.index,columns=self.output.keys())

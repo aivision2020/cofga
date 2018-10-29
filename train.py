@@ -33,6 +33,8 @@ parser.add_argument('--weighted-loss', dest='weighted_loss', action='store_true'
 parser.add_argument('--preload', dest='preload', action='store_false', help='preload all images into memory before training')
 parser.add_argument('--tag', type=str, default='baseline', help='tag - name of this experiment')
 parser.add_argument('--start-tag', type=str, default=None, help='start-tag - name of experiment use as pretrain')
+parser.add_argument('--architect', type=str, default='resnet18', help='architecture to use')
+
 args = parser.parse_args()
 
 def display_images(X, text, pred_text, nrow=4):
@@ -90,58 +92,53 @@ def evaluate(model, dataset, output_file, writer, freq=10):
                 writer.add_image('Test/images', grid, it)
         probs = collector.save(output_file)
 
-def write_to_board(writer, collector, it, dataset, it,  curr_batch,  num_steps, stage='train'):
-    outputs, images, Y, gt_text = curr_batch
-    #def write_to_board(writer, outputs, images, Y, gt_text, running_loss, num_steps, dataset, it, stage='train'):
+def write_to_board(writer, collector, it, dataset, curr_batch,  stage='train'):
     """
     it = current iteration to log
-    running_loss 
     """
-    sigmoid = nn.Sigmoid()
-    prediction = sigmoid(outputs)
+    prediction, images, Y, gt_text = curr_batch
     pred_text = map(dataset.labels_to_text, prediction.detach().cpu().numpy()[:16])
-    running_loss = running_loss.detach().cpu().numpy()
-    names = dataset.get_class_names()
 
-    y_true = Y.cpu().detach().numpy()
-    y_score = outputs.cpu().detach().numpy()
-    mask = np.count_nonzero(y_true,axis=0)>0
-    average_prec = MAP(y_true[:,mask],y_score[:,mask],average=None)
-    per_class =  dict(zip(np.array(names)[mask], average_prec))
+    average_prec, names = collector.calc_map()
+    per_class =  dict(zip(np.array(names), average_prec))
 
-    writer.add_scalars('Loss', {'total_%s'%stage: running_loss.mean()/num_steps}, it)
-    writer.add_scalars('Loss',
-            {'%s_%s'%(name,stage):l/num_steps
-                for name,l in zip(names, running_loss)}, it)
+    loss = collector.calc_loss()
+    writer.add_scalars('Loss', {'total_%s'%stage: loss.mean()}, it)
+    writer.add_scalars('Loss', {'%s_%s'%(name,stage):l
+                for name,l in zip(names, loss)}, it)
     writer.add_scalars('MAP', {'total_%s'%stage: average_prec.mean()}, it)
     map_per_class = {'%s_%s'%(name,stage):per_class[name]
-                for name,l in zip(names, running_loss) if name in per_class}
+                for name,l in zip(names, loss) if name in per_class}
     writer.add_scalars('MAP', map_per_class , it)
     grid=display_images(images[:16], gt_text[:16], pred_text[:16], nrow=4)
     writer.add_image('%s/images'%stage, grid, it)
 
     for key, value in sorted(map_per_class.iteritems(), key=lambda (k,v): (v,k)):
-        print "MAP %s: %s" % (key, value)
+        print "MAP %s: %0.2f" % (key, value)
 
 
 def main():
-    model = models.resnet18(pretrained=True)
+    if args.architect=='resnet18':
+        model = models.resnet18(pretrained=True)
+    if args.architect=='resnet50':
+        model = models.resnet50(pretrained=True)
     if args.freeze:
         for param in model.parameters():
             param.requires_grad = False
     assert not args.weighted_loss, 'not yet supported'
-    model.fc = nn.Sequential( torch.nn.Linear(in_features=512, out_features=1024),
-            torch.nn.Linear(in_features=1024, out_features=37))
+    model.fc = nn.Sequential(nn.Linear(in_features=model.fc.in_features, out_features=1024), nn.ReLU(),
+            nn.Linear(in_features=1024, out_features=37))
     cofga_v0 = model.cuda()
 
     criterion = nn.BCEWithLogitsLoss(reduction='none')
+    sigmoid = nn.Sigmoid()
     #criterion = RankLoss()
-    #optimizer = optim.SGD(cofga_v0.parameters(), lr=args.lr, momentum=args.momentum)
+    optimizer = optim.SGD(cofga_v0.parameters(), lr=args.lr, momentum=args.momentum)
     optimizer = optim.Adam(cofga_v0.parameters(), lr=args.lr)
 
-    filename = 'resnet18_BCEloss37%s.checkpoint.pth.tar'%args.tag
+    filename = '%s_BCEloss37%s.checkpoint.pth.tar'%(args.architect, args.tag)
     if args.start_tag is not None:
-        start_filename = 'resnet18_BCEloss37%s.checkpoint.pth.tar'%args.start_tag
+        start_filename = '%s_BCEloss37%s.checkpoint.pth.tar'%(args.architect, args.start_tag)
     else:
         start_filename = filename
 
@@ -155,69 +152,53 @@ def main():
         start_epoch=0
 
 
-    writer = SummaryWriter('runs/renset18/%s'%args.tag)
+    writer = SummaryWriter('runs/%s/%s'%(args.architect,args.tag))
     if args.evaluate:
         output_file = 'answer_%s.csv'%args.tag
         data = MafatDataset('data/test.csv', 'data/answer.csv', 'data/test imagery', preload=True,augment=False)
         evaluate(model, data, output_file, writer)
         exit()
 
-    train_dataset, val_dataset = create_train_val_dataset('data/test.csv',
-            'data/answer.csv', 'data/test imagery', preload=args.preload)
+    train_dataset, val_dataset = create_train_val_dataset('data/test.csv', 'data/answer.csv', 'data/test imagery', preload=args.preload)
     #train_dataset = val_dataset #TODO AVRAM
     train_loader = torch.utils.data.DataLoader(train_dataset, batch_size=args.batch_size, shuffle=True, num_workers=args.workers)
     val_loader = torch.utils.data.DataLoader(val_dataset,
             batch_size=args.batch_size, shuffle=True, num_workers=args.workers)
-    collector = PredictionCollector(train_dataset.get_class_names())
     for epoch in range(start_epoch, args.epochs):  # loop over the dataset multiple times
-        running_loss = None
-        running_accuracy = 0.0
+        collector = PredictionCollector(train_dataset.get_class_names())
         for i, data in enumerate(train_loader):
-            print 'epoch %d, i %d'%(epoch,i)
             images,labels, gt_text = data
             X = Variable(images).cuda()
             outputs = cofga_v0(X)
             Y = Variable(labels).cuda()
             ids = [int(text.split(',')[0]) for text in gt_text]
-            prediction = sigmoid(outputs)
-            collector.add(ids, outputs, Y)
+            predictions = sigmoid(outputs)
+            collector.add(ids, predictions.detach().cpu().numpy(), Y.detach().cpu().numpy())
+
             loss = criterion(outputs, Y)
             s=loss.mean()
             optimizer.zero_grad()
             s.backward()
             optimizer.step()
+            print 'epoch %d, i %d, loss %0.2f'%(epoch,i, s)
 
-            if len(loss.shape)>1:
-                loss = loss.sum(0)
-            if running_loss is None:
-                running_loss = loss
-            else:
-                running_loss += loss
-
-        print 'epoch %d, running loss '%epoch, running_loss/len(train_dataset)
-        it = (epoch+1)*len(train_loader)
-        write_to_board(writer, outputs, X, Y, gt_text, running_loss,
-                len(train_dataset), train_dataset, it, stage='train')
+        curr_batch = (predictions, images, Y, gt_text)
+        write_to_board(writer, collector, epoch, train_dataset, curr_batch, stage='train')
 
         with torch.no_grad():
+            collector = PredictionCollector(val_dataset.get_class_names())
             cofga_v0.eval()
-            running_loss=None
             for _, data in enumerate(val_loader):
                 images,labels, gt_text = data
                 X = Variable(images).cuda()
                 outputs = cofga_v0(X)
                 Y = Variable(labels).cuda()
-                loss = criterion(outputs, Y)
-                if len(loss.shape)>1:
-                    loss = loss.sum(0)
-                if running_loss is None:
-                    running_loss = loss
-                else:
-                    running_loss += loss
-            write_to_board(writer, outputs, X, Y, gt_text,
-                    loss, len(val_dataset), val_dataset, it, stage='val')
+                ids = [int(text.split(',')[0]) for text in gt_text]
+                predictions = sigmoid(outputs)
+                collector.add(ids, predictions.detach().cpu().numpy(), Y.detach().cpu().numpy())
+            curr_batch = (predictions, images, Y, gt_text)
+            write_to_board(writer, collector, epoch, val_dataset, curr_batch, stage='val')
             cofga_v0.train()
-        running_loss=None
         torch.save({ 'epoch': epoch + 1, 'state_dict': cofga_v0.state_dict(),
             'optimizer' : optimizer.state_dict(), }, filename)
     print('Finished ')
