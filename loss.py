@@ -16,7 +16,6 @@ class RankLoss(nn.Module):
         self.margin = margin
         self.sigmoid = nn.Sigmoid()
 
-
     def forward(self, pred, label):
         pred = self.sigmoid(pred)
         diff = pred[None,:,:]-pred[:,None,:]+self.margin
@@ -25,7 +24,6 @@ class RankLoss(nn.Module):
         loss = loss.sum(0).sum(0)
         denom=gt_diff.sum(0).sum(0).clamp(min=1)
         return loss/denom
-
 
     def forward_(self, pred, label):
         loss = np.zeros_like(label[0],dtype=np.float32)

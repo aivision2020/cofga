@@ -9,15 +9,18 @@ DISPLAY=True
 def test_collector():
     dataset = MafatDataset('data/train.csv', 'data/answer.csv', 'data/training imagery', preload=False)
     loader = torch.utils.data.DataLoader(dataset, batch_size=8, shuffle=False, num_workers=0)#args.workers)
-    collector = PredictionCollector(dataset.get_class_names())
+    collector = PredictionCollector(dataset.get_class_names(), True)
     for data in loader:
         images,labels, gt_text = data
         labels = labels.detach().numpy()
         ids = [int(text.split(',')[0]) for text in gt_text]
-        collector.add(ids, labels)
+        collector.add(ids, labels, labels)
         assert collector.output['dedicated agricultural vehicle'][24690]==1
         break
     assert len(collector.output) == 8
+    map, keys = collector.calc_map()
+    print 'map ',map
+    import ipdb; ipdb.set_trace()
     by_prob = collector.save('data/answer_v0.csv')
     assert np.all(by_prob['small vehicle']!=by_prob['large vehicle'])
     assert np.all([len(np.unique(by_prob[key])) == by_prob.shape[0] for key in by_prob.keys()])
@@ -25,6 +28,19 @@ def test_collector():
     assert by_prob['dedicated agricultural vehicle'].iloc[0]==24690
     print by_prob
 
+def test_collector_map():
+    dataset = MafatDataset('data/train.csv', 'data/answer.csv', 'data/training imagery', preload=False)
+    loader = torch.utils.data.DataLoader(dataset, batch_size=8, shuffle=False, num_workers=0)#args.workers)
+    collector = PredictionCollector(dataset.get_class_names(), True)
+    answers = pd.load_csv('/home/MAGICLEAP/agolbert/Project/mafat/answer-example.csv')
+    targs = pd.load_csv('data/train.csv')
+    for data in loader:
+        images,labels, gt_text = data
+        labels = labels.detach().numpy()
+        ids = [int(text.split(',')[0]) for text in gt_text]
+        collector.add(ids, labels)
+    collector.precision_np_metric(answers.values
+            collector.output.values.astype(int), 
 def test_loader():
     create_config_file('data/train.csv')
     #data = MafatDataset('data/train.csv', 'data/answer.csv', 'data/training imagery', False, True)
@@ -51,6 +67,6 @@ def test_loader_split():
     assert 0.18 < float(len(val.dat))/len(full.dat) < 0.22
 
 if __name__=='__main__':
-    test_loader()
-    #test_collector()
+    #test_loader()
+    test_collector_map()
     #test_loader_split()

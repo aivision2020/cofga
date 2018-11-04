@@ -15,6 +15,7 @@ import torchvision.transforms as transforms
 from torch.utils.data import Dataset
 import ipdb
 from sklearn.metrics import average_precision_score as MAP
+import copy
 
 config_file = 'data/config.yaml'
 
@@ -56,29 +57,66 @@ class PredictionCollector(object):
             tmp.loc[tagids]=labels
             self.labels = self.labels.append(tmp)
 
+    # MAFAT version of precision
+    def precision_np_metric_label(self, preds, targs, epsilon=1e-8):
+        preds_indexes =  np.argsort(preds)[::-1]
+        targs_sorted = targs[preds_indexes]
+        preds_sorted = preds[preds_indexes]
+        p_at_k = np.zeros_like(preds_sorted)
+        tp = 0.0
+        for i in range(len(preds_sorted)):
+            if targs_sorted[i]>0.5:
+                tp+=1
+                p_at_k[i] = tp / (i + 1)
+        ret = p_at_k.sum() / (tp+epsilon)
+        assert not(ret==0 and np.sum(targs)>0)
+        return ret
+
+    def precision_np_metric(self, preds, targs, epsilon=1e-8):
+        p_at_ks = np.zeros(targs.shape[-1])
+        for i in range(targs.shape[-1]):
+            p_at_ks[i] = self.precision_np_metric_label(preds[:, i], targs[:, i])
+        return p_at_ks
+
     def calc_map(self):
         y_true = self.labels.values.astype(int)
         y_score = self.output.values.astype(float)
-        mask = np.count_nonzero(y_true,axis=0)>0
-        return MAP(y_true[:,mask],y_score[:,mask],average=None), self.output.keys()[mask]
+        return self.precision_np_metric(y_score, y_true), self.labels.keys(), self.labels.values.sum(axis=0)
 
     def calc_loss(self):
         ret = self.criterion(torch.from_numpy(self.output.values.astype(float)), torch.from_numpy(self.labels.values.astype(float))).mean(0)
         assert len(ret)==37
         return ret
 
-    def save(self, csv_filename):
-        by_prob = pd.DataFrame(index=self.output.index,columns=self.output.keys())
+    def save(self, csv_filename, sanitize=False):
+        output = copy.copy(self.output)
+        if sanitize:
+            p_large = output['large vehicle']/(output['large vehicle']+output['small vehicle'])
+            output['large vehicle']=p_large
+            output['small vehicle']=(1-p_large)
+            sub_large = 'Truck, Light truck, Cement mixer, Dedicated agricultural vehicle, Crane truck, Prime mover, Tanker, Bus, Minibus'.split(',').strip().lower()
+            sub_small = 'Sedan, Hatchback, Minivan, Van, Pickup truck, Jeep'.split(',').strip().lower()
+            for k in sub_large:
+                output[k] = output[k]*output['large vehicle']
+            for k in sub_small:
+                output[k] = output[k]*output['small vehicle']
+
+            sub_small_features = 'Sunroof, Luggage carrier, Spare wheel'.split(',').strip().lower()
+            sub_large_features = 'AC vents, Enclosed box, Ladder, Flatbed, Soft shell box, Harnessed to a cart'.split(',').strip().lower()
+
+            for k in sub_large_features:
+                output[k] = output[k]*output['large vehicle']
+            for k in sub_small_features:
+                output[k] = output[k]*output['small vehicle']
+
+        by_prob = pd.DataFrame(index=self.output.index,columns=output.keys())
         for key in by_prob.keys():
-            inds = np.argsort(self.output[key])[::-1]
+            inds = np.argsort(output[key])[::-1]
             assert np.all(inds>=0)
-            by_prob[key] = self.output.index[inds].copy()
-            #if 'small' in key or 'large' in key:
-            #    print self.output[key]
-            #    print inds
-            #    print self.output.index[inds]
-            #    import ipdb; ipdb.set_trace()
-        by_prob.to_csv(csv_filename)
+            by_prob[key] = output.index[inds].copy()
+
+
+        by_prob.to_csv(csv_filename, index=False)
         return by_prob
 
 class MafatDataset(Dataset):
@@ -101,9 +139,9 @@ class MafatDataset(Dataset):
             self.transforms = transforms.Compose([
                 transforms.ToPILImage(),
                 transforms.RandomHorizontalFlip(),
-                #transforms.RandomVerticalFlip(),
-                #transforms.ColorJitter(0.1, 0.1, 0.1, 0.1),
-                transforms.RandomRotation(25),
+                transforms.RandomVerticalFlip(),
+                transforms.ColorJitter(0.1, 0.1, 0.1, 0.1),
+                transforms.RandomRotation(180),
                 transforms.ToTensor()
                 ])
         else:
@@ -133,7 +171,7 @@ class MafatDataset(Dataset):
                 imfile = self.imfolder%id
                 imfile = glob.glob(imfile)[0]
                 assert id not in self.ims
-                #self.ims[id] = cv2.cvtColor(cv2.imread(imfile), cv2.COLOR_BGR2RGB)
+                self.ims[id] = cv2.cvtColor(cv2.imread(imfile), cv2.COLOR_BGR2RGB)
             self.dat = self.dat.loc[np.isin(self.dat['image_id'], imageids)]
 
     def __len__(self):
@@ -182,14 +220,15 @@ class MafatDataset(Dataset):
         if imageid in self.ims:
             im = self.ims[imageid]
         else:
+            print 'warning, loading image from HDD. Slow!'
             imfile = self.imfolder%imageid
             imfile = glob.glob(imfile)[0]
             im = cv2.cvtColor(cv2.imread(imfile), cv2.COLOR_BGR2RGB)
         xs = ['p1_x', ' p2_x', ' p3_x', ' p4_x']
         ys = ['p_1y', ' p2_y', ' p3_y', ' p4_y']
 
-        dx = np.max(row[xs].values)-np.min(row[xs].values) + 10
-        dy = np.max(row[ys].values)-np.min(row[ys].values) + 10
+        dx = np.max(row[xs].values)-np.min(row[xs].values)
+        dy = np.max(row[ys].values)-np.min(row[ys].values)
         patch_size = np.sqrt(dx**2+dy**2)+10
         if not self.resize:
             patch_size = np.maximum(self.patch_size, patch_size)
@@ -211,6 +250,12 @@ class MafatDataset(Dataset):
         assert I.shape[-2]==224, (I.shape, index)
 
         return (I, labels, '%d,%d,%s'%(row['tag_id'],imageid,self.labels_to_text(labels)))
+
+    def get_class(self, class_name, class_value, num=-1):
+        samples = np.where(self.dat[class_name]==class_value)[0]
+        num = np.minimum(num, len(samples))
+        trans = transforms.ToPILImage()
+        return [np.array(trans(self.__getitem__(i)[0])) for i in samples[:num]]
 
 def create_train_val_dataset(csv_file_name, answer_csv, imfolder, split=0.8, preload=True):
     train = MafatDataset('data/train.csv', 'data/answer.csv', 'data/training imagery', preload, start=0, end=0.8)
