@@ -152,8 +152,8 @@ class MafatDataset(Dataset):
                 transforms.ToTensor() ])
         self.trans_final = transforms.Compose([
             transforms.ToPILImage(),
-            transforms.Resize(self.patch_size, PIL.Image.BICUBIC),
-            transforms.Pad((self.full_size-self.patch_size)/2),
+            # transforms.Resize(self.patch_size, PIL.Image.BICUBIC),
+            # transforms.Pad((self.full_size-self.patch_size)/2),
             transforms.ToTensor()])
         self.top_class = ['general_class', 'sub_class', 'color']
         self.dat = pd.read_csv(csv_file_name)
@@ -249,8 +249,9 @@ class MafatDataset(Dataset):
         I = self.trans_final(I)
 
         labels = self.row_to_label(row)
-        assert I.shape[-1]==224, (I.shape)
-        assert I.shape[-2]==224, (I.shape, index)
+        # assert I.shape[-1]==224, (I.shape)
+        # assert I.shape[-2]==224, (I.shape, index)
+        assert I.shape[-1] > 0 and I.shape[-2] > 0, (I.shape, index)
 
         return (I, labels, '%d,%d,%s'%(row['tag_id'],imageid,self.labels_to_text(labels)))
 
