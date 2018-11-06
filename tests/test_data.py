@@ -28,19 +28,6 @@ def test_collector():
     assert by_prob['dedicated agricultural vehicle'].iloc[0]==24690
     print by_prob
 
-def test_collector_map():
-    dataset = MafatDataset('data/train.csv', 'data/answer.csv', 'data/training imagery', preload=False)
-    loader = torch.utils.data.DataLoader(dataset, batch_size=8, shuffle=False, num_workers=0)#args.workers)
-    collector = PredictionCollector(dataset.get_class_names(), True)
-    answers = pd.load_csv('/home/MAGICLEAP/agolbert/Project/mafat/answer-example.csv')
-    targs = pd.load_csv('data/train.csv')
-    for data in loader:
-        images,labels, gt_text = data
-        labels = labels.detach().numpy()
-        ids = [int(text.split(',')[0]) for text in gt_text]
-        collector.add(ids, labels)
-    collector.precision_np_metric(answers.values
-            collector.output.values.astype(int), 
 def test_loader():
     create_config_file('data/train.csv')
     #data = MafatDataset('data/train.csv', 'data/answer.csv', 'data/training imagery', False, True)
@@ -58,9 +45,17 @@ def test_loader():
             plt.show()
 
 def test_loader_split():
-    full = MafatDataset('data/train.csv', 'data/answer.csv', 'data/training imagery', True)
-    train = MafatDataset('data/train.csv', 'data/answer.csv', 'data/training imagery', True, start=0, end=0.8)
-    val = MafatDataset('data/train.csv', 'data/answer.csv', 'data/training imagery', True, start=0.8, end=1)
+    full = MafatDataset('data/train.csv', 'data/answer.csv', 'data/training imagery', preload=True)
+    train = MafatDataset('data/train.csv', 'data/answer.csv', 'data/training imagery', preload=True, start=0, end=0.8)
+    val = MafatDataset('data/train.csv', 'data/answer.csv', 'data/training imagery', preload=True, start=0.8, end=1)
+    assert len(np.unique(full.dat['image_id'])) > len(np.unique(train.dat['image_id']))
+    assert len(np.unique(full.dat['image_id'])) > len(np.unique(val.dat['image_id']))
+    assert 0.78 < float(len(train.dat))/len(full.dat) < 0.82
+    assert 0.18 < float(len(val.dat))/len(full.dat) < 0.22
+
+def test_loader_split_byoverlap():
+    full = MafatDataset('data/train.csv', 'data/answer.csv', 'data/training imagery', preload=True)
+    train, val = create_train_val_dataset('data/train.csv', 'data/answer.csv', 'data/training imagegy', image_group_file='data/train_pairs.yaml', preload=True)
     assert len(np.unique(full.dat['image_id'])) > len(np.unique(train.dat['image_id']))
     assert len(np.unique(full.dat['image_id'])) > len(np.unique(val.dat['image_id']))
     assert 0.78 < float(len(train.dat))/len(full.dat) < 0.82
@@ -68,5 +63,5 @@ def test_loader_split():
 
 if __name__=='__main__':
     #test_loader()
-    test_collector_map()
-    #test_loader_split()
+    #test_collector_map()
+    test_loader_split()

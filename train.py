@@ -38,6 +38,7 @@ parser.add_argument('--architect', type=str, default='resnet18', help='architect
 parser.add_argument('--loss', type=str, default=None, help='loss function to use. default BCE ')
 parser.add_argument('--no-split', action='store_true', help='Train on the whole train set (do not split train into test-val)' )
 parser.add_argument('--sanitize', action='store_true', help='sanitize output probabilities acording to subclasses' )
+parser.add_argument('--image-group-file', default='data/train_image_groups.yaml', action='store_true', help='sanitize output probabilities acording to subclasses' )
 args = parser.parse_args()
 
 def display_images(X, text, pred_text, nrow=4):
@@ -64,14 +65,8 @@ def display_images(X, text, pred_text, nrow=4):
             I = cv2.putText(I, char.strip(), (10,y_loc), cv2.FONT_HERSHEY_PLAIN, 3, (0,0,255))
             y_loc+=35
 
-        #for t in [t1,t2]:
-        #    for char in t.split(','):
-        #        I = cv2.putText(I, char.strip(), (10,y_loc), cv2.FONT_HERSHEY_PLAIN, 3, (255,255,255))
-        #        y_loc+=35
-
         images.append(torch.from_numpy(np.transpose(I,[2,0,1])))
     return make_grid(images, nrow=4)
-
 
 def load_model():
     if args.architect.startswith('resnet'):
@@ -88,7 +83,6 @@ def load_model():
             nn.Linear(in_features=1024, out_features=37))
     else:
         raise 'no known architecture %s'%args.architect
-    assert not args.weighted_loss, 'not yet supported'
     filename = '%s.checkpoint.pth.tar'%(args.tag)
     if args.start_tag is not None:
         start_filename = '%s.checkpoint.pth.tar'%(args.start_tag)
@@ -99,33 +93,13 @@ def load_model():
     if os.path.exists(start_filename) and args.resume:
         checkpoint = torch.load(start_filename)
         model.load_state_dict(checkpoint['state_dict'])
-        print 'loaded wieghts from file ', start_filename
+        print 'loaded weights from file ', start_filename
     for i, child in enumerate(model.children()):
+        print child
         if i < args.freeze:
             for param in child.parameters():
                 param.requires_grad = False
     return model.cuda(), checkpoint, filename
-
-def evaluate(dataset, output_file):
-
-    model, _, _ = load_model()
-    writer = SummaryWriter('runs/%s/%s'%(args.architect,args.tag))
-    train_loader = torch.utils.data.DataLoader(dataset, batch_size=args.batch_size, shuffle=False, num_workers=args.workers)
-    sigmoid = nn.Sigmoid()
-    collector = PredictionCollector(dataset.get_class_names())
-    with torch.no_grad():
-        for it, data in enumerate(train_loader):
-            images,labels, gt_text = data
-            X = Variable(images).cuda()
-            outputs = model(X)
-            prediction = sigmoid(outputs)
-            ids = [int(text.split(',')[0]) for text in gt_text]
-            collector.add(ids, prediction)
-
-        pred_text = map(dataset.labels_to_text, prediction.detach().cpu().numpy()[:16])
-        grid=display_images(X[:16], gt_text[:16], pred_text[:16], nrow=4)
-        writer.add_image('Test/images', grid, it)
-        collector.save(output_file)
 
 def write_to_board(writer, collector, it, dataset, curr_batch,  stage='train'):
     """
@@ -151,6 +125,25 @@ def write_to_board(writer, collector, it, dataset, curr_batch,  stage='train'):
     for key,value in sorted(per_class_map.iteritems(), key=lambda (k,v): (v,k)):
         print "MAP_%s %s: %0.2f, # %d " % (stage, key, value, per_class_instance[key])
 
+def evaluate(dataset, output_file):
+    model, _, _ = load_model()
+    writer = SummaryWriter('runs/%s/%s'%(args.architect,args.tag))
+    train_loader = torch.utils.data.DataLoader(dataset, batch_size=args.batch_size, shuffle=False, num_workers=args.workers)
+    sigmoid = nn.Sigmoid()
+    collector = PredictionCollector(dataset.get_class_names())
+    with torch.no_grad():
+        for it, data in enumerate(train_loader):
+            images,labels, gt_text = data
+            X = Variable(images).cuda()
+            outputs = model(X)
+            prediction = sigmoid(outputs)
+            ids = [int(text.split(',')[0]) for text in gt_text]
+            collector.add(ids, prediction)
+
+        pred_text = map(dataset.labels_to_text, prediction.detach().cpu().numpy()[:16])
+        grid=display_images(X[:16], gt_text[:16], pred_text[:16], nrow=4)
+        writer.add_image('Test/images', grid, it)
+        collector.save(output_file)
 
 def train():
     model, checkpoint, filename = load_model()
@@ -167,7 +160,9 @@ def train():
     epochs = args.epochs
     start_epoch = 0
     if checkpoint is not None:
-        optimizer.load_state_dict(checkpoint['optimizer'])
+        if args.start_tag is None:
+            print 'loading optimizer state'
+            optimizer.load_state_dict(checkpoint['optimizer'])
         start_epoch = checkpoint['epoch']
         epochs = args.epochs+start_epoch
 
@@ -179,10 +174,27 @@ def train():
         train_loader = torch.utils.data.DataLoader(train_dataset, batch_size=args.batch_size, shuffle=True, num_workers=args.workers)
         val_loader = train_loader
     else:
-        train_dataset, val_dataset = create_train_val_dataset('data/test.csv', 'data/answer.csv', 'data/test imagery', preload=args.preload)
+        train_dataset, val_dataset = create_train_val_dataset('data/test.csv', 'data/answer.csv', 'data/test imagery',
+                image_group_file=args.image_group_file, preload=args.preload)
         train_loader = torch.utils.data.DataLoader(train_dataset, batch_size=args.batch_size, shuffle=True, num_workers=args.workers)
         val_loader = torch.utils.data.DataLoader(val_dataset, batch_size=args.batch_size, shuffle=True, num_workers=args.workers)
-    for epoch in range(start_epoch, epochs):
+
+    #with torch.no_grad():
+    #    collector = PredictionCollector(val_dataset.get_class_names())
+    #    model.eval()
+    #    for _, data in enumerate(val_loader):
+    #        images,labels, gt_text = data
+    #        X = Variable(images).cuda()
+    #        outputs = model(X)
+    #        Y = Variable(labels).cuda()
+    #        ids = [int(text.split(',')[0]) for text in gt_text]
+    #        predictions = sigmoid(outputs)
+    #        collector.add(ids, predictions.detach().cpu().numpy(), Y.detach().cpu().numpy())
+    #    curr_batch = (predictions, images, Y, gt_text)
+    #    write_to_board(writer, collector, start_epoch, val_dataset, curr_batch, stage='val')
+    #    model.train()
+
+    for epoch in range(start_epoch+1, epochs):
         collector = PredictionCollector(train_dataset.get_class_names())
         for i, data in enumerate(train_loader):
             images,labels, gt_text = data
@@ -194,7 +206,9 @@ def train():
             collector.add(ids, predictions.detach().cpu().numpy(), Y.detach().cpu().numpy())
 
             loss = criterion(outputs, Y)
-            s=loss.mean()
+            if args.weighted_loss:
+                loss = loss.sum(0)/torch.clamp(Y.sum(0),1)
+            s = loss.mean()
             optimizer.zero_grad()
             s.backward()
             optimizer.step()
@@ -202,7 +216,8 @@ def train():
 
         curr_batch = (predictions, images, Y, gt_text)
         write_to_board(writer, collector, epoch, train_dataset, curr_batch, stage='train')
-
+        torch.save({ 'epoch': epoch + 1, 'state_dict': model.state_dict(),
+            'optimizer' : optimizer.state_dict(), }, filename)
         if args.no_split:
             continue
         with torch.no_grad():
@@ -219,8 +234,6 @@ def train():
             curr_batch = (predictions, images, Y, gt_text)
             write_to_board(writer, collector, epoch, val_dataset, curr_batch, stage='val')
             model.train()
-        torch.save({ 'epoch': epoch + 1, 'state_dict': model.state_dict(),
-            'optimizer' : optimizer.state_dict(), }, filename)
     print('Finished ')
 
 if __name__=='__main__':
