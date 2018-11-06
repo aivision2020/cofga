@@ -70,7 +70,7 @@ def display_images(X, text, pred_text, nrow=4):
 
 def load_model():
     if args.architect.startswith('resnet'):
-        if args.achitect=='resnet18':
+        if args.architect=='resnet18':
             model = models.resnet18(pretrained=True)
         if args.architect=='resnet50':
             model = models.resnet50(pretrained=True)
@@ -83,9 +83,9 @@ def load_model():
             nn.Linear(in_features=1024, out_features=37))
     else:
         raise 'no known architecture %s'%args.architect
-    filename = '%s.checkpoint.pth.tar'%(args.tag)
+    filename = 'snapshots/%s.checkpoint.pth.tar'%(args.tag)
     if args.start_tag is not None:
-        start_filename = '%s.checkpoint.pth.tar'%(args.start_tag)
+        start_filename = 'snapshots/%s.checkpoint.pth.tar'%(args.start_tag)
     else:
         start_filename = filename
 
@@ -131,6 +131,7 @@ def evaluate(dataset, output_file):
     train_loader = torch.utils.data.DataLoader(dataset, batch_size=args.batch_size, shuffle=False, num_workers=args.workers)
     sigmoid = nn.Sigmoid()
     collector = PredictionCollector(dataset.get_class_names())
+    model.eval()
     with torch.no_grad():
         for it, data in enumerate(train_loader):
             images,labels, gt_text = data
