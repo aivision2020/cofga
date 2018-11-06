@@ -17,10 +17,11 @@ class RankLoss(nn.Module):
         self.sigmoid = nn.Sigmoid()
 
     def forward(self, pred, label):
+        assert label.min()>=0 , "no legative labels here"
         pred = self.sigmoid(pred)
         diff = pred[None,:,:]-pred[:,None,:]+self.margin
-        gt_diff = torch.clamp(label[:,None,:]-label[None,:,:],0,1)
-        loss = torch.clamp(diff*gt_diff,0,1)
+        gt_diff = (label[:,None,:]-label[None,:,:]).clamp(min=0)
+        loss = (diff*gt_diff).clamp(min=0)
         loss = loss.sum(0).sum(0)
         denom=gt_diff.sum(0).sum(0).clamp(min=1)
         return loss/denom
@@ -33,4 +34,3 @@ class RankLoss(nn.Module):
                     if label[i,c]==1 and label[j,c]==0:
                         loss[c]+=max(0, pred[j,c]+self.margin-pred[i,c])
         return loss
-

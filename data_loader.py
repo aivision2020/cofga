@@ -1,3 +1,4 @@
+import yaml
 import torch.nn as nn
 import PIL
 import shutil
@@ -121,7 +122,8 @@ class PredictionCollector(object):
 
 class MafatDataset(Dataset):
     def __init__(self, csv_file_name, answer_csv, imfolder, preload=False,
-            resize=True, patch_size=128, full_size=224, augment=True, start=0, end=1):
+            resize=True, patch_size=128, full_size=224, augment=True, start=0,
+            end=1, imageids=None):
         """
         croping scheme:
         patch_size is the size of pixels containing data.
@@ -163,16 +165,17 @@ class MafatDataset(Dataset):
 
         self.ims={}
 
-        if preload:
+        if imageids is None:
             imageids = np.unique(self.dat['image_id'])
-            if start is not None and end is not None:
-                imageids = imageids[int(len(imageids)*start):int(len(imageids)*end)]
+        if start is not None and end is not None:
+            imageids = imageids[int(len(imageids)*start):int(len(imageids)*end)]
+        self.dat = self.dat.loc[np.isin(self.dat['image_id'], imageids)]
+        if preload:
             for id in imageids:
                 imfile = self.imfolder%id
                 imfile = glob.glob(imfile)[0]
                 assert id not in self.ims
                 self.ims[id] = cv2.cvtColor(cv2.imread(imfile), cv2.COLOR_BGR2RGB)
-            self.dat = self.dat.loc[np.isin(self.dat['image_id'], imageids)]
 
     def __len__(self):
         return len(self.dat)
@@ -188,7 +191,7 @@ class MafatDataset(Dataset):
 
         for k,d in self.remap.items():
             if k in row:
-                value = row[k].values[0]
+                value = row[k]
                 if k in self.top_class:
                     labels[value].loc[0]=1
                 else:
@@ -215,27 +218,27 @@ class MafatDataset(Dataset):
             return patch
 
     def __getitem__(self, index):
-        row = self.dat.iloc[[index]]
-        imageid = row['image_id'].values[0]
+        row = self.dat.iloc[index]
+        imageid = row['image_id']#.values[0]
         if imageid in self.ims:
             im = self.ims[imageid]
         else:
-            print 'warning, loading image from HDD. Slow!'
             imfile = self.imfolder%imageid
+            print 'warning, loading image from HDD. Slow!', imfile
             imfile = glob.glob(imfile)[0]
             im = cv2.cvtColor(cv2.imread(imfile), cv2.COLOR_BGR2RGB)
         xs = ['p1_x', ' p2_x', ' p3_x', ' p4_x']
         ys = ['p_1y', ' p2_y', ' p3_y', ' p4_y']
 
-        dx = np.max(row[xs].values)-np.min(row[xs].values)
-        dy = np.max(row[ys].values)-np.min(row[ys].values)
+        dx = np.max(row[xs])-np.min(row[xs])
+        dy = np.max(row[ys])-np.min(row[ys])
         patch_size = np.sqrt(dx**2+dy**2)+10
         if not self.resize:
             patch_size = np.maximum(self.patch_size, patch_size)
 
         tmp_half_size = int(1.5*patch_size/2)
-        center_x = np.mean(row[xs].values)
-        center_y = np.mean(row[ys].values)
+        center_x = np.mean(row[xs])
+        center_y = np.mean(row[ys])
         I = self.crop(im,int(center_x),int(center_y),tmp_half_size)
         I = self.transforms(I)
 
@@ -256,9 +259,23 @@ class MafatDataset(Dataset):
         samples = np.where(self.dat[class_name]==class_value)[0]
         num = np.minimum(num, len(samples))
         trans = transforms.ToPILImage()
-        return [np.array(trans(self.__getitem__(i)[0])) for i in samples[:num]]
+        return [np.array(trans(self.__getitem__(i)[0])) for i in samples[:num]], self.dat['image_id'][samples[:num]]
 
-def create_train_val_dataset(csv_file_name, answer_csv, imfolder, split=0.8, preload=True):
-    train = MafatDataset('data/train.csv', 'data/answer.csv', 'data/training imagery', preload, start=0, end=0.8)
-    val = MafatDataset('data/train.csv', 'data/answer.csv', 'data/training imagery', preload, start=0.8, end=1, augment=False)
+def create_train_val_dataset(csv_file_name, answer_csv, imfolder, split=0.8, image_group_file=None, preload=True):
+    if image_group_file is None:
+        train = MafatDataset(csv_file_name, answer_csv, 'data/training imagery', preload, start=0, end=0.8)
+        val =  MafatDataset(csv_file_name, answer_csv , 'data/training imagery', preload, start=0.8, end=1, augment=False)
+        return train, val
+    im_groups = yaml.load(open(image_group_file))
+    all_ids=np.hstack(im_groups)
+    N = len(all_ids)
+    train_ims = np.hstack([s for s in im_groups if len(s)>1])
+    the_rest = np.hstack([s for s in im_groups if len(s)==1])
+    np.random.shuffle(the_rest)
+    train_ims = np.concatenate((train_ims, the_rest[:int(N*split-len(train_ims))]))
+    val_ims = [im for im in set(all_ids).difference(train_ims)]
+    train = MafatDataset('data/train.csv', 'data/answer.csv', 'data/training imagery', preload, imageids=train_ims, augment=True)
+    val = MafatDataset('data/train.csv', 'data/answer.csv', 'data/training imagery', preload, imageids=val_ims, augment=False)
     return train, val
+
+

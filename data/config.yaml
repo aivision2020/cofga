@@ -1,0 +1,17 @@
+ac_vents: {'-1': 0, '0': 0, '1': 1}
+color: {black: 0, blue: 1, green: 2, other: 3, red: 4, silver/grey: 5, white: 6, yellow: 7}
+enclosed_box: {'-1': 0, '0': 0, '1': 1}
+enclosed_cab: {'-1': 0, '0': 0, '1': 1}
+flatbed: {'-1': 0, '0': 0, '1': 1}
+general_class: {large vehicle: 0, small vehicle: 1}
+harnessed_to_a_cart: {'-1': 0, '0': 0, '1': 1}
+ladder: {'-1': 0, '0': 0, '1': 1}
+luggage_carrier: {'-1': 0, '0': 0, '1': 1}
+open_cargo_area: {'0': 0, '1': 1}
+soft_shell_box: {'-1': 0, '0': 0, '1': 1}
+spare_wheel: {'-1': 0, '0': 0, '1': 1}
+sub_class: {bus: 0, cement mixer: 1, crane truck: 2, dedicated agricultural vehicle: 3,
+  hatchback: 4, jeep: 5, light truck: 6, minibus: 7, minivan: 8, pickup: 9, prime mover: 10,
+  sedan: 11, tanker: 12, truck: 13, van: 14}
+sunroof: {'-1': 0, '0': 0, '1': 1}
+wrecked: {'0': 0, '1': 1}
