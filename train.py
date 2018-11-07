@@ -14,8 +14,8 @@ from tensorboardX import SummaryWriter
 from PIL import Image
 from sklearn.metrics import average_precision_score as MAP
 from loss import RankLoss
-# from models.imagenet import mobilenetv2
 from collate import default_collate as collate_fn
+from models.imagenet import mobilenetv2
 
 parser = argparse.ArgumentParser(description='PyTorch ImageNet Training')
 #parser.add_argument('data', metavar='DIR', help='path to dataset')
@@ -78,16 +78,16 @@ def load_model():
             model = models.resnet50(pretrained=True)
         model.fc = nn.Sequential(nn.Linear(in_features=model.fc.in_features, out_features=1024),
                 nn.ReLU(), nn.Linear(in_features=1024, out_features=37))
-    # elif args.architect=='mobilenet':
-    #     model = mobilenetv2()
-    #     model.load_state_dict(torch.load('./mobilenetv2.pytorch/pretrained/mobilenetv2-36f4e720.pth'))
-    #     model.classifier = nn.Sequential(nn.Linear(in_features=model.classifier.in_features, out_features=1024), nn.ReLU(),
-    #         nn.Linear(in_features=1024, out_features=37))
+    elif args.architect=='mobilenet':
+        model = mobilenetv2()
+        model.load_state_dict(torch.load('./mobilenetv2.pytorch/pretrained/mobilenetv2-36f4e720.pth'))
+        model.classifier = nn.Sequential(nn.Linear(in_features=model.classifier.in_features, out_features=1024), nn.ReLU(),
+            nn.Linear(in_features=1024, out_features=37))
     else:
         raise 'no known architecture %s'%args.architect
-    filename = 'snapshots/%s.checkpoint.pth.tar'%(args.tag)
+    filename = '%s.checkpoint.pth.tar'%(args.tag)
     if args.start_tag is not None:
-        start_filename = 'snapshots/%s.checkpoint.pth.tar'%(args.start_tag)
+        start_filename = '%s.checkpoint.pth.tar'%(args.start_tag)
     else:
         start_filename = filename
 
@@ -130,10 +130,11 @@ def write_to_board(writer, collector, it, dataset, curr_batch,  stage='train'):
 def evaluate(dataset, output_file):
     model, _, _ = load_model()
     writer = SummaryWriter('runs/%s/%s'%(args.architect,args.tag))
-    train_loader = torch.utils.data.DataLoader(dataset, batch_size=args.batch_size, shuffle=False, num_workers=args.workers)
+    train_loader = torch.utils.data.DataLoader(dataset,
+            batch_size=args.batch_size, shuffle=False,
+            num_workers=args.workers,collate_fn=default_collate)
     sigmoid = nn.Sigmoid()
     collector = PredictionCollector(dataset.get_class_names())
-    model.eval()
     with torch.no_grad():
         for it, data in enumerate(train_loader):
             images,labels, gt_text = data
@@ -174,7 +175,8 @@ def train():
     if args.no_split:
         train_dataset = MafatDataset('data/train.csv', 'data/answer.csv', 'data/training imagery', args.preload)
         val_dataset = train_dataset
-        train_loader = torch.utils.data.DataLoader(train_dataset, batch_size=args.batch_size, shuffle=True, num_workers=args.workers)
+        train_loader = torch.utils.data.DataLoader(train_dataset, batch_size=args.batch_size, shuffle=True,
+                num_workers=args.workers,collate_fn=default_collate)
         val_loader = train_loader
     else:
         train_dataset, val_dataset = create_train_val_dataset('data/test.csv', 'data/answer.csv', 'data/test imagery',
