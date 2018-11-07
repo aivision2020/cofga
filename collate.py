@@ -6,10 +6,10 @@ import numpy as np
 
 
 def calc_out_dims(batch):
-    hs = [x[1] for x in batch]
-    ws = [x[2] for x in batch]
-    max_h = max(hs)
-    max_w = max(ws)
+    hs = [x.shape[1] for x in batch]
+    ws = [x.shape[2] for x in batch]
+    max_h = int(max(hs))
+    max_w = int(max(ws))
     return (len(batch), 3, max_h, max_w)
 
 
@@ -24,7 +24,7 @@ def get_start_end(orig_shape, out_shape):
     eh = ohh+hh
     sw = oww-ww
     ew = oww+ww
-    return sh, eh, sw, ew
+    return int(sh), int(eh), int(sw), int(ew)
 
 
 def collate_tensors(batch):
