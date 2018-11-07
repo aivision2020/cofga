@@ -15,6 +15,7 @@ from PIL import Image
 from sklearn.metrics import average_precision_score as MAP
 from loss import RankLoss
 # from models.imagenet import mobilenetv2
+from collate import default_collate as collate_fn
 
 parser = argparse.ArgumentParser(description='PyTorch ImageNet Training')
 #parser.add_argument('data', metavar='DIR', help='path to dataset')
@@ -178,8 +179,8 @@ def train():
     else:
         train_dataset, val_dataset = create_train_val_dataset('data/test.csv', 'data/answer.csv', 'data/test imagery',
                 image_group_file=args.image_group_file, preload=args.preload)
-        train_loader = torch.utils.data.DataLoader(train_dataset, batch_size=args.batch_size, shuffle=True, num_workers=args.workers)
-        val_loader = torch.utils.data.DataLoader(val_dataset, batch_size=args.batch_size, shuffle=True, num_workers=args.workers)
+        train_loader = torch.utils.data.DataLoader(train_dataset, batch_size=args.batch_size, shuffle=True, num_workers=args.workers, collate_fn=collate_fn)
+        val_loader = torch.utils.data.DataLoader(val_dataset, batch_size=args.batch_size, shuffle=True, num_workers=args.workers, collate_fn=collate_fn)
 
     #with torch.no_grad():
     #    collector = PredictionCollector(val_dataset.get_class_names())
@@ -195,7 +196,6 @@ def train():
     #    curr_batch = (predictions, images, Y, gt_text)
     #    write_to_board(writer, collector, start_epoch, val_dataset, curr_batch, stage='val')
     #    model.train()
-
     for epoch in range(start_epoch+1, epochs):
         collector = PredictionCollector(train_dataset.get_class_names())
         for i, data in enumerate(train_loader):
