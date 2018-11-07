@@ -14,7 +14,7 @@ from tensorboardX import SummaryWriter
 from PIL import Image
 from sklearn.metrics import average_precision_score as MAP
 from loss import RankLoss
-from models.imagenet import mobilenetv2
+# from models.imagenet import mobilenetv2
 
 parser = argparse.ArgumentParser(description='PyTorch ImageNet Training')
 #parser.add_argument('data', metavar='DIR', help='path to dataset')
@@ -72,15 +72,16 @@ def load_model():
     if args.architect.startswith('resnet'):
         if args.architect=='resnet18':
             model = models.resnet18(pretrained=True)
+            model.avgpool = nn.AdaptiveAvgPool2d(1)
         if args.architect=='resnet50':
             model = models.resnet50(pretrained=True)
         model.fc = nn.Sequential(nn.Linear(in_features=model.fc.in_features, out_features=1024),
                 nn.ReLU(), nn.Linear(in_features=1024, out_features=37))
-    elif args.architect=='mobilenet':
-        model = mobilenetv2()
-        model.load_state_dict(torch.load('./mobilenetv2.pytorch/pretrained/mobilenetv2-36f4e720.pth'))
-        model.classifier = nn.Sequential(nn.Linear(in_features=model.classifier.in_features, out_features=1024), nn.ReLU(),
-            nn.Linear(in_features=1024, out_features=37))
+    # elif args.architect=='mobilenet':
+    #     model = mobilenetv2()
+    #     model.load_state_dict(torch.load('./mobilenetv2.pytorch/pretrained/mobilenetv2-36f4e720.pth'))
+    #     model.classifier = nn.Sequential(nn.Linear(in_features=model.classifier.in_features, out_features=1024), nn.ReLU(),
+    #         nn.Linear(in_features=1024, out_features=37))
     else:
         raise 'no known architecture %s'%args.architect
     filename = 'snapshots/%s.checkpoint.pth.tar'%(args.tag)
