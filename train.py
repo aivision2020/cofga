@@ -18,6 +18,7 @@ from collate import default_collate as collate_fn
 from models.imagenet import mobilenetv2
 from torch.utils.data import WeightedRandomSampler
 
+
 parser = argparse.ArgumentParser(description='PyTorch ImageNet Training')
 #parser.add_argument('data', metavar='DIR', help='path to dataset')
 parser.add_argument('-j', '--workers', default=4, type=int, metavar='N', help='number of data loading workers (default: 4)')
@@ -81,11 +82,11 @@ def load_model():
             model = models.resnet50(pretrained=True)
         model.fc = nn.Sequential(nn.Linear(in_features=model.fc.in_features, out_features=1024),
                 nn.ReLU(), nn.Linear(in_features=1024, out_features=37))
-    elif args.architect=='mobilenet':
-        model = mobilenetv2()
-        model.load_state_dict(torch.load('./mobilenetv2.pytorch/pretrained/mobilenetv2-36f4e720.pth'))
-        model.classifier = nn.Sequential(nn.Linear(in_features=model.classifier.in_features, out_features=1024), nn.ReLU(),
-            nn.Linear(in_features=1024, out_features=37))
+    # elif args.architect=='mobilenet':
+    #     model = mobilenetv2()
+    #     model.load_state_dict(torch.load('./mobilenetv2.pytorch/pretrained/mobilenetv2-36f4e720.pth'))
+    #     model.classifier = nn.Sequential(nn.Linear(in_features=model.classifier.in_features, out_features=1024), nn.ReLU(),
+    #         nn.Linear(in_features=1024, out_features=37))
     else:
         raise 'no known architecture %s'%args.architect
     filename = '%s.checkpoint.pth.tar'%(args.tag)
