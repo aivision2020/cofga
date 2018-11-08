@@ -50,12 +50,13 @@ class PredictionCollector(object):
             self.criterion = nn.BCELoss(reduction='none')
 
     def add(self, tagids, predictions,labels=None):
-        tmp = pd.DataFrame(index=tagids,columns=self.output.keys())
-        tmp.loc[tagids]=predictions
+        vals, inds = np.unique(tagids, return_index=True)
+        tmp = pd.DataFrame(index=vals,columns=self.output.keys())
+        tmp.loc[vals]=predictions[inds]
         self.output = self.output.append(tmp)
         if labels is not None:
-            tmp = pd.DataFrame(index=tagids,columns=self.output.keys())
-            tmp.loc[tagids]=labels
+            tmp = pd.DataFrame(index=vals,columns=self.output.keys())
+            tmp.loc[vals]=labels[inds]
             self.labels = self.labels.append(tmp)
 
     # MAFAT version of precision
@@ -122,21 +123,23 @@ class PredictionCollector(object):
 
 class MafatDataset(Dataset):
     def __init__(self, csv_file_name, answer_csv, imfolder, preload=False,
-            resize=True, patch_size=128, full_size=224, augment=True, start=0,
+            resize=True, patch_size=128, full_size=224, boarder_ratio=1.1, mask_detection=False, augment=True, start=0,
             end=1, imageids=None):
         """
         croping scheme:
         patch_size is the size of pixels containing data.
         full size is the patch size that will be given to the next.
         The diff between patch_size and full size will be black pixels
-        resize False will simply crop a pathc of patch size oround the center of the detections
-        resize False will take the detection (+5 pixels) and resize to patch_size
+        resize False will simply crop a patch of patch_size around the center of the detections
+        resize True will take the detection+boarder_size pixels and resize to patch_size
+        mask_detection will block the detection and leave only the boarder (for context)
         """
         super(MafatDataset, self).__init__()
-        self.patch_size=224
         self.resize=resize
         self.patch_size=patch_size
         self.full_size=full_size
+        self.boarder_ratio=boarder_ratio
+        self.mask_detection=mask_detection
         if augment:
             self.transforms = transforms.Compose([
                 transforms.ToPILImage(),
@@ -152,7 +155,7 @@ class MafatDataset(Dataset):
                 transforms.ToTensor() ])
         self.trans_final = transforms.Compose([
             transforms.ToPILImage(),
-            # transforms.Resize(self.patch_size, PIL.Image.BICUBIC),
+            transforms.Resize(self.patch_size, PIL.Image.BICUBIC),
             # transforms.Pad((self.full_size-self.patch_size)/2),
             transforms.ToTensor()])
         self.top_class = ['general_class', 'sub_class', 'color']
@@ -218,6 +221,7 @@ class MafatDataset(Dataset):
             return patch
 
     def __getitem__(self, index):
+        index = int(index) #sometimes, when using sampler, this comes in a Tensor. Why?
         row = self.dat.iloc[index]
         imageid = row['image_id']#.values[0]
         if imageid in self.ims:
@@ -232,7 +236,8 @@ class MafatDataset(Dataset):
 
         dx = np.max(row[xs])-np.min(row[xs])
         dy = np.max(row[ys])-np.min(row[ys])
-        patch_size = np.sqrt(dx**2+dy**2)+10
+        detection_size = int(np.sqrt(dx**2+dy**2))
+        patch_size = detection_size*self.boarder_ratio
         if not self.resize:
             patch_size = np.maximum(self.patch_size, patch_size)
 
@@ -246,8 +251,13 @@ class MafatDataset(Dataset):
         x = int(tmp_half_size+np.random.rand()*5)
         half_size = int(patch_size/2)
         I = I[:, y-half_size:y+half_size,x-half_size:x+half_size]
-        I = self.trans_final(I)
 
+        if self.mask_detection:
+            half_detection=int(detection_size/2)
+            y = int(I.shape[1]/2)
+            x = int(I.shape[2]/2)
+            I[:,y-half_detection:y+half_detection, x-half_detection:x+half_detection]=0
+        I = self.trans_final(I)
         labels = self.row_to_label(row)
         # assert I.shape[-1]==224, (I.shape)
         # assert I.shape[-2]==224, (I.shape, index)
@@ -262,10 +272,25 @@ class MafatDataset(Dataset):
         samples = np.where(mask)[0]
         return [np.array(trans(self.__getitem__(i)[0])) for i in samples[:num]], self.dat['image_id'][mask]
 
-def create_train_val_dataset(csv_file_name, answer_csv, imfolder, split=0.8, image_group_file=None, preload=True, augment=True):
+    def get_weights(self):
+        if os.path.exists('data/train_features.npy'):
+            print 'reading from file'
+            features = np.load('data/train_features.npy')
+        else:
+            features = [self.row_to_label(self.dat.iloc[i]) for i in range(len(self.dat))]
+            features = np.array(features).T
+            np.save('data/train_features.npy', features)
+        occurences = features.sum(axis=1,keepdims=True)
+        weights =np.minimum(np.sum(features/occurences,axis=0),0.01)#no more than 1%
+        assert len(occurences) == 37
+        assert len(weights) == len(self.dat)
+        return weights, len(self.dat)
+
+
+def create_train_val_dataset(csv_file_name, answer_csv, imfolder, split=0.8, image_group_file=None, augment=True,**kwargs):
     if image_group_file is None:
-        train = MafatDataset(csv_file_name, answer_csv, 'data/training imagery', preload, start=0, end=0.8, augment=augment)
-        val =  MafatDataset(csv_file_name, answer_csv , 'data/training imagery', preload, start=0.8, end=1, augment=False)
+        train = MafatDataset(csv_file_name, answer_csv, 'data/training imagery', start=0, end=0.8, augment=augment, **kwargs)
+        val =  MafatDataset(csv_file_name, answer_csv , 'data/training imagery', start=0.8, end=1, augment=False, **kwargs)
         return train, val
     im_groups = yaml.load(open(image_group_file))
     all_ids=np.hstack(im_groups)
@@ -277,8 +302,8 @@ def create_train_val_dataset(csv_file_name, answer_csv, imfolder, split=0.8, ima
     val_ims = [im for im in set(all_ids).difference(train_ims)]
     assert len(set(val_ims).intersection(train_ims))==0
     assert len(val_ims)+len(train_ims)==len(all_ids)
-    train = MafatDataset('data/train.csv', 'data/answer.csv', 'data/training imagery', preload, imageids=train_ims, augment=augment)
-    val = MafatDataset('data/train.csv', 'data/answer.csv', 'data/training imagery', preload, imageids=val_ims, augment=False)
+    train = MafatDataset('data/train.csv', 'data/answer.csv', 'data/training imagery', imageids=train_ims, augment=augment, **kwargs)
+    val = MafatDataset('data/train.csv', 'data/answer.csv', 'data/training imagery', imageids=val_ims, augment=False, **kwargs)
     return train, val
 
 

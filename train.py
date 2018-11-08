@@ -16,6 +16,7 @@ from sklearn.metrics import average_precision_score as MAP
 from loss import RankLoss
 from collate import default_collate as collate_fn
 from models.imagenet import mobilenetv2
+from torch.utils.data import WeightedRandomSampler
 
 parser = argparse.ArgumentParser(description='PyTorch ImageNet Training')
 #parser.add_argument('data', metavar='DIR', help='path to dataset')
@@ -32,12 +33,14 @@ parser.add_argument('-e', '--evaluate', dest='evaluate', action='store_true', he
 parser.add_argument('--pretrained', dest='pretrained', action='store_true', help='use pre-trained model')
 parser.add_argument('--freeze', dest='freeze', default=0, type=int, help='number of childern to freeze for base model')
 parser.add_argument('--weighted-loss', dest='weighted_loss', action='store_true', help='use weights in log loss')
+parser.add_argument('--weighted-sample', dest='weighted_sample', action='store_true', help='use weights in log loss')
 parser.add_argument('--preload', dest='preload', action='store_false', help='preload all images into memory before training')
 parser.add_argument('--tag', type=str, default='baseline', help='tag - name of this experiment')
 parser.add_argument('--start-tag', type=str, default=None, help='start-tag - name of experiment use as pretrain')
 parser.add_argument('--architect', type=str, default='resnet18', help='architecture to use')
 parser.add_argument('--loss', type=str, default=None, help='loss function to use. default BCE ')
 parser.add_argument('--no-split', action='store_true', help='Train on the whole train set (do not split train into test-val)' )
+parser.add_argument('--context', action='store_true', help='mask the detections. use only context')
 parser.add_argument('--sanitize', action='store_true', help='sanitize output probabilities acording to subclasses' )
 parser.add_argument('--image-group-file', default='data/train_image_groups.yaml', action='store_true', help='sanitize output probabilities acording to subclasses' )
 args = parser.parse_args()
@@ -132,7 +135,7 @@ def evaluate(dataset, output_file):
     writer = SummaryWriter('runs/%s/%s'%(args.architect,args.tag))
     train_loader = torch.utils.data.DataLoader(dataset,
             batch_size=args.batch_size, shuffle=False,
-            num_workers=args.workers,collate_fn=default_collate)
+            num_workers=args.workers,collate_fn=collate_fn)
     sigmoid = nn.Sigmoid()
     collector = PredictionCollector(dataset.get_class_names())
     with torch.no_grad():
@@ -172,17 +175,29 @@ def train():
 
     writer = SummaryWriter('runs/%s/%s'%(args.architect,args.tag))
 
+    print 'loading Dataset'
+    dataset_args={}
+    if args.context:
+        dataset_args.update(dict(mask_detection=True, boarder_ratio=5, patch_size=224))
+
     if args.no_split:
-        train_dataset = MafatDataset('data/train.csv', 'data/answer.csv', 'data/training imagery', args.preload)
+        train_dataset = MafatDataset('data/train.csv', 'data/answer.csv', 'data/training imagery', args.preload,**dataset_args)
         val_dataset = train_dataset
-        train_loader = torch.utils.data.DataLoader(train_dataset, batch_size=args.batch_size, shuffle=True,
-                num_workers=args.workers,collate_fn=default_collate)
-        val_loader = train_loader
     else:
         train_dataset, val_dataset = create_train_val_dataset('data/test.csv', 'data/answer.csv', 'data/test imagery',
-                image_group_file=args.image_group_file, preload=args.preload)
-        train_loader = torch.utils.data.DataLoader(train_dataset, batch_size=args.batch_size, shuffle=True, num_workers=args.workers, collate_fn=collate_fn)
-        val_loader = torch.utils.data.DataLoader(val_dataset, batch_size=args.batch_size, shuffle=True, num_workers=args.workers, collate_fn=collate_fn)
+                image_group_file=args.image_group_file, preload=args.preload, **dataset_args)
+
+    sampler=None
+    if args.weighted_sample:
+        print 'calc sample weights'
+        weights, num_samples = train_dataset.get_weights()
+        print 'init sampler'
+        sampler = WeightedRandomSampler(weights, len(weights), replacement=True)
+        print 'done init sampler'
+    train_loader = torch.utils.data.DataLoader(train_dataset,
+            batch_size=args.batch_size, shuffle=(sampler is None),
+            num_workers=args.workers, collate_fn=collate_fn,sampler=sampler)
+    val_loader = torch.utils.data.DataLoader(val_dataset, batch_size=args.batch_size, shuffle=True, num_workers=args.workers, collate_fn=collate_fn)
 
     #with torch.no_grad():
     #    collector = PredictionCollector(val_dataset.get_class_names())

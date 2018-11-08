@@ -44,6 +44,21 @@ def test_loader():
             plt.title('%d'%i)
             plt.show()
 
+def test_loader_mask():
+    create_config_file('data/train.csv')
+    dataset_args=dict(mask_detection=True, boarder_ratio=5, patch_size=224)
+    data = MafatDataset('data/train.csv', 'data/answer.csv', 'data/training imagery', preload=False, **dataset_args)
+    print len(data)
+    for i in [3978, 47, 301, 530, 100, 410]:
+        im, l, text = data.__getitem__(i)
+        print 'label', l
+        print text
+        assert len(l)==37 or len(l)==0
+        if DISPLAY:
+            plt.imshow(im[0],cmap='gray')
+            plt.title('%d'%i)
+            plt.show()
+
 def test_loader_split():
     full = MafatDataset('data/train.csv', 'data/answer.csv', 'data/training imagery', preload=True)
     train = MafatDataset('data/train.csv', 'data/answer.csv', 'data/training imagery', preload=True, start=0, end=0.8)
@@ -61,7 +76,15 @@ def test_loader_split_byoverlap():
     assert 0.78 < float(len(train.dat))/len(full.dat) < 0.82
     assert 0.18 < float(len(val.dat))/len(full.dat) < 0.22
 
+def test_loader_weights():
+    full = MafatDataset('data/train.csv', 'data/answer.csv', 'data/training imagery', preload=False)
+    w,c = full.get_weights()
+    print w 
+    assert len(w)==len(full)
+
 if __name__=='__main__':
     #test_loader()
     #test_collector_map()
-    test_loader_split()
+    #test_loader_split()
+    #test_loader_weights()
+    test_loader_mask()
