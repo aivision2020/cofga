@@ -13,6 +13,7 @@ import pandas as pd
 import yaml
 from torch.autograd import Variable
 import torchvision.transforms as transforms
+import torchvision.transforms.functional as F
 from torch.utils.data import Dataset
 import ipdb
 from sklearn.metrics import average_precision_score as MAP
@@ -123,41 +124,44 @@ class PredictionCollector(object):
 
 class MafatDataset(Dataset):
     def __init__(self, csv_file_name, answer_csv, imfolder, preload=False,
-            resize=True, patch_size=128, full_size=224, boarder_ratio=1.1, mask_detection=False, augment=True, start=0,
-            end=1, imageids=None):
+            normalize_size=True, normalize_rotation=False, patch_size=128,
+            boarder_ratio=2, mask_detection=False, augment=True,
+            start=0, end=1, imageids=None):
         """
         croping scheme:
         patch_size is the size of pixels containing data.
-        full size is the patch size that will be given to the next.
-        The diff between patch_size and full size will be black pixels
         resize False will simply crop a patch of patch_size around the center of the detections
         resize True will take the detection+boarder_size pixels and resize to patch_size
         mask_detection will block the detection and leave only the boarder (for context)
         """
         super(MafatDataset, self).__init__()
-        self.resize=resize
         self.patch_size=patch_size
-        self.full_size=full_size
         self.boarder_ratio=boarder_ratio
         self.mask_detection=mask_detection
+        self.normalize_rotation = normalize_rotation
+        self.normalize_size = normalize_size
+        rotation_jitter = 1 if normalize_rotation else 180
         if augment:
             self.transforms = transforms.Compose([
                 transforms.ToPILImage(),
                 transforms.RandomHorizontalFlip(),
                 transforms.RandomVerticalFlip(),
                 transforms.ColorJitter(0.1, 0.1, 0.1, 0.1),
-                transforms.RandomRotation(180),
-                transforms.ToTensor()
+                transforms.RandomRotation(rotation_jitter, PIL.Image.BILINEAR),
                 ])
         else:
             self.transforms = transforms.Compose([
                 transforms.ToPILImage(),
-                transforms.ToTensor() ])
-        self.trans_final = transforms.Compose([
-            transforms.ToPILImage(),
-            transforms.Resize(self.patch_size, PIL.Image.BICUBIC),
-            # transforms.Pad((self.full_size-self.patch_size)/2),
-            transforms.ToTensor()])
+                ])
+        if self.normalize_size:
+            self.trans_final = transforms.Compose([
+                transforms.Resize(self.patch_size, PIL.Image.BILINEAR),
+                transforms.ToTensor()
+                ])
+        else:
+            self.trans_final = transforms.Compose([
+                transforms.ToTensor()])
+
         self.top_class = ['general_class', 'sub_class', 'color']
         self.dat = pd.read_csv(csv_file_name)
         self.answer = pd.read_csv(answer_csv)
@@ -231,32 +235,41 @@ class MafatDataset(Dataset):
             print 'warning, loading image from HDD. Slow!', imfile
             imfile = glob.glob(imfile)[0]
             im = cv2.cvtColor(cv2.imread(imfile), cv2.COLOR_BGR2RGB)
-        xs = ['p1_x', ' p2_x', ' p3_x', ' p4_x']
-        ys = ['p_1y', ' p2_y', ' p3_y', ' p4_y']
+        xs = ['p1_x', ' p2_x', ' p3_x', ' p4_x', 'p1_x']
+        ys = ['p_1y', ' p2_y', ' p3_y', ' p4_y', 'p_1y']
 
-        dx = np.max(row[xs])-np.min(row[xs])
-        dy = np.max(row[ys])-np.min(row[ys])
+        points = np.vstack((row[xs],row[ys])).astype(float)
+        diff = np.diff(points, axis=1)
+        lens = np.linalg.norm(diff, axis=0)
+        i = np.argmax(lens)
+        dx,dy = diff[:, i]
         detection_size = int(np.sqrt(dx**2+dy**2))
         patch_size = detection_size*self.boarder_ratio
-        if not self.resize:
+        if not self.normalize_size:
             patch_size = np.maximum(self.patch_size, patch_size)
 
         tmp_half_size = int(1.5*patch_size/2)
         center_x = np.mean(row[xs])
         center_y = np.mean(row[ys])
         I = self.crop(im,int(center_x),int(center_y),tmp_half_size)
+        #print I.shape
         I = self.transforms(I)
 
+        if self.normalize_rotation:
+            I = F.rotate(I, np.rad2deg(np.arctan2(dy,dx)), PIL.Image.BILINEAR)
         y = int(tmp_half_size+np.random.rand()*5)
         x = int(tmp_half_size+np.random.rand()*5)
         half_size = int(patch_size/2)
-        I = I[:, y-half_size:y+half_size,x-half_size:x+half_size]
+        I = F.crop(I, y-half_size, x-half_size, patch_size, patch_size)
 
         if self.mask_detection:
             half_detection=int(detection_size/2)
             y = int(I.shape[1]/2)
             x = int(I.shape[2]/2)
-            I[:,y-half_detection:y+half_detection, x-half_detection:x+half_detection]=0
+            img = np.asarray(I)
+            img[:,y-half_detection:y+half_detection, x-half_detection:x+half_detection]=0
+            I=Image.fromarray(img)
+
         I = self.trans_final(I)
         labels = self.row_to_label(row)
         # assert I.shape[-1]==224, (I.shape)
@@ -297,7 +310,7 @@ def create_train_val_dataset(csv_file_name, answer_csv, imfolder, split=0.8, ima
     N = len(all_ids)
     train_ims = np.hstack([s for s in im_groups if len(s)>1])
     the_rest = np.hstack([s for s in im_groups if len(s)==1])
-    #np.random.shuffle(the_rest)
+    np.random.shuffle(the_rest)
     train_ims = np.concatenate((train_ims, the_rest[:int(N*split-len(train_ims))]))
     val_ims = [im for im in set(all_ids).difference(train_ims)]
     assert len(set(val_ims).intersection(train_ims))==0

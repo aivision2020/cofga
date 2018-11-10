@@ -29,16 +29,13 @@ def test_collector():
     print by_prob
 
 def test_loader():
-    create_config_file('data/train.csv')
-    #data = MafatDataset('data/train.csv', 'data/answer.csv', 'data/training imagery', False, True)
-    data, _ = create_train_val_dataset('data/train.csv', 'data/answer.csv', 'data/training imagery', False, True)
+    data = MafatDataset('data/train.csv', 'data/answer.csv', 'data/training imagery', preload=False,augment=False)
     print len(data)
     for i in [3977, 49, 300, 500]:
         im, l, text = data.__getitem__(i)
         print 'label', l
         print text
         assert len(l)==37 or len(l)==0
-        assert im.shape[-1]==224
         if DISPLAY:
             plt.imshow(im[0],cmap='gray')
             plt.title('%d'%i)
@@ -83,8 +80,8 @@ def test_loader_weights():
     assert len(w)==len(full)
 
 if __name__=='__main__':
-    #test_loader()
+    test_loader()
     #test_collector_map()
     #test_loader_split()
     #test_loader_weights()
-    test_loader_mask()
+    #test_loader_mask()

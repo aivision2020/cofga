@@ -21,7 +21,7 @@ from torch.utils.data import WeightedRandomSampler
 
 parser = argparse.ArgumentParser(description='PyTorch ImageNet Training')
 #parser.add_argument('data', metavar='DIR', help='path to dataset')
-parser.add_argument('-j', '--workers', default=4, type=int, metavar='N', help='number of data loading workers (default: 4)')
+parser.add_argument('-j', '--workers', default=12, type=int, metavar='N', help='number of data loading workers (default: 4)')
 parser.add_argument('--epochs', default=100, type=int, metavar='N', help='number of total epochs to run')
 parser.add_argument('--start-epoch', default=0, type=int, metavar='N', help='manual epoch number (useful on restarts)')
 parser.add_argument('-b', '--batch-size', default=64, type=int, metavar='N', help='mini-batch size (default: 256)')
@@ -30,8 +30,8 @@ parser.add_argument('--momentum', default=0.9, type=float, metavar='M', help='mo
 parser.add_argument('--weight-decay', '--wd', default=1e-4, type=float, metavar='W', help='weight decay (default: 1e-4)')
 parser.add_argument('--print-freq', '-p', default=10, type=int, metavar='N', help='print frequency (default: 10)')
 parser.add_argument('--resume', action='store_false')
-parser.add_argument('-e', '--evaluate', dest='evaluate', action='store_true', help='evaluate model on validation set')
-parser.add_argument('--pretrained', dest='pretrained', action='store_true', help='use pre-trained model')
+parser.add_argument('-e', '--evaluate', dest='evaluate', action='store_true', help='evaluate model on test set')
+parser.add_argument('--pretrained', dest='pretrained', action='store_false', help='use pre-trained model')
 parser.add_argument('--freeze', dest='freeze', default=0, type=int, help='number of childern to freeze for base model')
 parser.add_argument('--weighted-loss', dest='weighted_loss', action='store_true', help='use weights in log loss')
 parser.add_argument('--weighted-sample', dest='weighted_sample', action='store_true', help='use weights in log loss')
@@ -42,6 +42,8 @@ parser.add_argument('--architect', type=str, default='resnet18', help='architect
 parser.add_argument('--loss', type=str, default=None, help='loss function to use. default BCE ')
 parser.add_argument('--no-split', action='store_true', help='Train on the whole train set (do not split train into test-val)' )
 parser.add_argument('--context', action='store_true', help='mask the detections. use only context')
+parser.add_argument('--normalize_rotation', action='store_true', help='mask the detections. use only context')
+parser.add_argument('--normalize_size', action='store_false', help='mask the detections. use only context')
 parser.add_argument('--sanitize', action='store_true', help='sanitize output probabilities acording to subclasses' )
 parser.add_argument('--image-group-file', default='data/train_image_groups.yaml', action='store_true', help='sanitize output probabilities acording to subclasses' )
 args = parser.parse_args()
@@ -76,10 +78,10 @@ def display_images(X, text, pred_text, nrow=4):
 def load_model():
     if args.architect.startswith('resnet'):
         if args.architect=='resnet18':
-            model = models.resnet18(pretrained=True)
+            model = models.resnet18(pretrained=args.pretrained)
             model.avgpool = nn.AdaptiveAvgPool2d(1)
         if args.architect=='resnet50':
-            model = models.resnet50(pretrained=True)
+            model = models.resnet50(pretrained=args.pretrained)
         model.fc = nn.Sequential(nn.Linear(in_features=model.fc.in_features, out_features=1024),
                 nn.ReLU(), nn.Linear(in_features=1024, out_features=37))
     # elif args.architect=='mobilenet':
@@ -107,6 +109,24 @@ def load_model():
                 param.requires_grad = False
     return model.cuda(), checkpoint, filename
 
+def init_dataset():
+    print 'loading Dataset'
+    dataset_args={}
+    if args.context:
+        dataset_args.update(dict(mask_detection=True, boarder_ratio=5, patch_size=224))
+    if args.normalize_size:
+        dataset_args.update(dict(normalize_size=True))
+    if args.normalize_rotation:
+        dataset_args.update(dict(normalize_rotation=True))
+
+    if args.no_split:
+        train_dataset = MafatDataset('data/train.csv', 'data/answer.csv', 'data/training imagery', args.preload,**dataset_args)
+        val_dataset = train_dataset
+    else:
+        train_dataset, val_dataset = create_train_val_dataset('data/test.csv', 'data/answer.csv', 'data/test imagery',
+                image_group_file=args.image_group_file, preload=args.preload, **dataset_args)
+    return train_dataset, val_dataset
+
 def write_to_board(writer, collector, it, dataset, curr_batch,  stage='train'):
     """
     it = current iteration to log
@@ -131,8 +151,18 @@ def write_to_board(writer, collector, it, dataset, curr_batch,  stage='train'):
     for key,value in sorted(per_class_map.iteritems(), key=lambda (k,v): (v,k)):
         print "MAP_%s %s: %0.2f, # %d " % (stage, key, value, per_class_instance[key])
 
-def evaluate(dataset, output_file):
+def evaluate():
+    output_file = 'answer_%s.csv'%args.tag
     model, _, _ = load_model()
+    dataset_args={}
+    if args.context:
+        dataset_args.update(dict(mask_detection=True, boarder_ratio=5, patch_size=224))
+    if args.normalize_size:
+        dataset_args.update(dict(normalize_size=True))
+    if args.normalize_rotation:
+        dataset_args.update(dict(normalize_rotation=True))
+    dataset = MafatDataset('data/test.csv', 'data/answer.csv', 'data/test imagery', 
+            preload=args.preload, augment=False, **dataset_args)
     writer = SummaryWriter('runs/%s/%s'%(args.architect,args.tag))
     train_loader = torch.utils.data.DataLoader(dataset,
             batch_size=args.batch_size, shuffle=False,
@@ -150,6 +180,7 @@ def evaluate(dataset, output_file):
 
         pred_text = map(dataset.labels_to_text, prediction.detach().cpu().numpy()[:16])
         grid=display_images(X[:16], gt_text[:16], pred_text[:16], nrow=4)
+        cv2.imsave(grid.numpy()[0], 'test_grid.png')
         writer.add_image('Test/images', grid, it)
         collector.save(output_file)
 
@@ -176,18 +207,7 @@ def train():
 
     writer = SummaryWriter('runs/%s/%s'%(args.architect,args.tag))
 
-    print 'loading Dataset'
-    dataset_args={}
-    if args.context:
-        dataset_args.update(dict(mask_detection=True, boarder_ratio=5, patch_size=224))
-
-    if args.no_split:
-        train_dataset = MafatDataset('data/train.csv', 'data/answer.csv', 'data/training imagery', args.preload,**dataset_args)
-        val_dataset = train_dataset
-    else:
-        train_dataset, val_dataset = create_train_val_dataset('data/test.csv', 'data/answer.csv', 'data/test imagery',
-                image_group_file=args.image_group_file, preload=args.preload, **dataset_args)
-
+    train_dataset, val_dataset = init_dataset()
     sampler=None
     if args.weighted_sample:
         print 'calc sample weights'
@@ -258,8 +278,6 @@ def train():
 
 if __name__=='__main__':
     if args.evaluate:
-        output_file = 'answer_%s.csv'%args.tag
-        data = MafatDataset('data/test.csv', 'data/answer.csv', 'data/test imagery', preload=args.preload, augment=False)
-        evaluate(data, output_file)
+        evaluate()
     else:
         train()
