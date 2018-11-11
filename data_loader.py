@@ -310,7 +310,7 @@ def create_train_val_dataset(csv_file_name, answer_csv, imfolder, split=0.8, ima
     N = len(all_ids)
     train_ims = np.hstack([s for s in im_groups if len(s)>1])
     the_rest = np.hstack([s for s in im_groups if len(s)==1])
-    np.random.shuffle(the_rest)
+    #np.random.shuffle(the_rest)
     train_ims = np.concatenate((train_ims, the_rest[:int(N*split-len(train_ims))]))
     val_ims = [im for im in set(all_ids).difference(train_ims)]
     assert len(set(val_ims).intersection(train_ims))==0
