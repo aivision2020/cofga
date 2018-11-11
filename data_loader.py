@@ -162,6 +162,8 @@ class MafatDataset(Dataset):
             self.trans_final = transforms.Compose([
                 transforms.ToTensor()])
 
+        self.standardize = transforms.Normalize(mean=[0.485, 0.456, 0.406],
+                                                std=[0.229, 0.224, 0.225])
         self.top_class = ['general_class', 'sub_class', 'color']
         self.dat = pd.read_csv(csv_file_name)
         self.answer = pd.read_csv(answer_csv)
@@ -271,6 +273,7 @@ class MafatDataset(Dataset):
             I=Image.fromarray(img)
 
         I = self.trans_final(I)
+        I = self.standardize(I)
         labels = self.row_to_label(row)
         # assert I.shape[-1]==224, (I.shape)
         # assert I.shape[-2]==224, (I.shape, index)
