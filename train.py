@@ -75,9 +75,9 @@ def display_images(X, text, pred_text, nrow=4):
 
 def load_model():
     if args.architect.startswith('resnet'):
-        if args.architect=='resnet18':
+        if args.architect == 'resnet18':
             model = models.resnet18(pretrained=True)
-        if args.architect=='resnet50':
+        if args.architect == 'resnet50':
             model = models.resnet50(pretrained=True)
         model.avgpool = nn.AdaptiveAvgPool2d(1)
         if args.nodoublefc is True:
@@ -85,11 +85,15 @@ def load_model():
         else:
             model.fc = nn.Sequential(nn.Linear(in_features=model.fc.in_features, out_features=1024),
                                      nn.ReLU(), nn.Linear(in_features=1024, out_features=37))  # change dis shit
-    elif args.architect=='mobilenet':
+    elif args.architect == 'mobilenet':
         model = mobilenetv2()
         model.load_state_dict(torch.load('./mobilenetv2/pretrained/mobilenetv2-36f4e720.pth'))
         model.avgpool = nn.AdaptiveAvgPool2d(1)
-        model.classifier = nn.Linear(in_features=model.classifier.in_features, out_features=37)
+        if args.nodoublefc is True:
+            model.classifier = nn.Linear(in_features=model.classifier.in_features, out_features=37)
+        else:
+            model.classifier = nn.Sequential(nn.Linear(in_features=model.fc.in_features, out_features=1024),
+                                             nn.ReLU(), nn.Linear(in_features=1024, out_features=37))  # change dis shit
     elif args.architect in pretrainedmodels.__dict__: # no blabla fully conv for these models
         model = pretrainedmodels.__dict__[args.architect](num_classes=1000, pretrained='imagenet')
         load_img = utils.LoadImage()
@@ -164,6 +168,7 @@ def evaluate(dataset, output_file):
 
 def train():
     model, checkpoint, filename = load_model()
+    model.train()
     if args.loss == 'RankLoss':
         print 'starting RankLoss'
         criterion = RankLoss()
