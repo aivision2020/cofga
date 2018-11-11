@@ -54,8 +54,12 @@ args = parser.parse_args()
 
 def display_images(X, text, pred_text, nrow=4):
     images = []
+    mean = np.array([0.485, 0.456, 0.406])[:,np.newaxis,np.newaxis]
+    std = np.array([0.229, 0.224, 0.225])[:,np.newaxis,np.newaxis]
     for im, t1, t2 in zip(X,text, pred_text):
-        I = (np.transpose(im.cpu().detach().numpy(), [1,2,0]).copy()*225).astype(np.uint8)
+        im = im.cpu().detach().numpy()
+        im = im*std+mean # unnormalize
+        I = (np.transpose(im, [1,2,0]).copy()*225).astype(np.uint8)
         I = cv2.resize(I,(500,500))
         y_loc = 35
         t1 = t1.split(',')
@@ -98,7 +102,7 @@ def load_model():
         if args.nodoublefc is True:
             model.classifier = nn.Linear(in_features=model.classifier.in_features, out_features=37)
         else:
-            model.classifier = nn.Sequential(nn.Linear(in_features=model.fc.in_features, out_features=1024),
+            model.classifier = nn.Sequential(nn.Linear(in_features=model.classifier.in_features, out_features=1024),
                                              nn.ReLU(), nn.Linear(in_features=1024, out_features=37))  # change dis shit
     elif args.architect in pretrainedmodels.__dict__: # no blabla fully conv for these models
         model = pretrainedmodels.__dict__[args.architect](num_classes=1000, pretrained='imagenet')
