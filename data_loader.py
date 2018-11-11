@@ -123,7 +123,7 @@ class PredictionCollector(object):
 class MafatDataset(Dataset):
     def __init__(self, csv_file_name, answer_csv, imfolder, preload=False,
             resize=True, patch_size=128, full_size=224, augment=True, start=0,
-            end=1, imageids=None):
+            end=1, imageids=None, load_transform=None):
         """
         croping scheme:
         patch_size is the size of pixels containing data.
