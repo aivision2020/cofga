@@ -1,4 +1,3 @@
-import pandas as pd
 import numpy as np
 import os
 import cv2
@@ -11,12 +10,15 @@ import torch.optim as optim
 from torch.autograd import Variable
 from data_loader import MafatDataset, PredictionCollector, create_train_val_dataset
 from tensorboardX import SummaryWriter
-from PIL import Image
-from sklearn.metrics import average_precision_score as MAP
 from loss import RankLoss
 from collate import default_collate as collate_fn
-from models.imagenet import mobilenetv2
 from torch.utils.data import WeightedRandomSampler
+from mobilenetv2.models.imagenet import mobilenetv2
+import pretrainedmodels
+import pretrainedmodels.utils as utils
+
+
+# To control gpus use CUDA_VISIBLE_DEVICES env var
 
 
 parser = argparse.ArgumentParser(description='PyTorch ImageNet Training')
@@ -24,6 +26,7 @@ parser = argparse.ArgumentParser(description='PyTorch ImageNet Training')
 parser.add_argument('-j', '--workers', default=12, type=int, metavar='N', help='number of data loading workers (default: 4)')
 parser.add_argument('--epochs', default=100, type=int, metavar='N', help='number of total epochs to run')
 parser.add_argument('--start-epoch', default=0, type=int, metavar='N', help='manual epoch number (useful on restarts)')
+parser.add_argument('--nodoublefc', action='store_true')
 parser.add_argument('-b', '--batch-size', default=64, type=int, metavar='N', help='mini-batch size (default: 256)')
 parser.add_argument('--lr', '--learning-rate', default=0.01, type=float, metavar='LR', help='initial learning rate')
 parser.add_argument('--momentum', default=0.9, type=float, metavar='M', help='momentum')
@@ -47,6 +50,7 @@ parser.add_argument('--normalize_size', action='store_false', help='mask the det
 parser.add_argument('--sanitize', action='store_true', help='sanitize output probabilities acording to subclasses' )
 parser.add_argument('--image-group-file', default='data/train_image_groups.yaml', action='store_true', help='sanitize output probabilities acording to subclasses' )
 args = parser.parse_args()
+
 
 def display_images(X, text, pred_text, nrow=4):
     images = []
@@ -77,18 +81,29 @@ def display_images(X, text, pred_text, nrow=4):
 
 def load_model():
     if args.architect.startswith('resnet'):
-        if args.architect=='resnet18':
-            model = models.resnet18(pretrained=args.pretrained)
-            model.avgpool = nn.AdaptiveAvgPool2d(1)
-        if args.architect=='resnet50':
-            model = models.resnet50(pretrained=args.pretrained)
-        model.fc = nn.Sequential(nn.Linear(in_features=model.fc.in_features, out_features=1024),
-                nn.ReLU(), nn.Linear(in_features=1024, out_features=37))
-    # elif args.architect=='mobilenet':
-    #     model = mobilenetv2()
-    #     model.load_state_dict(torch.load('./mobilenetv2.pytorch/pretrained/mobilenetv2-36f4e720.pth'))
-    #     model.classifier = nn.Sequential(nn.Linear(in_features=model.classifier.in_features, out_features=1024), nn.ReLU(),
-    #         nn.Linear(in_features=1024, out_features=37))
+        if args.architect == 'resnet18':
+            model = models.resnet18(pretrained=True)
+        if args.architect == 'resnet50':
+            model = models.resnet50(pretrained=True)
+        model.avgpool = nn.AdaptiveAvgPool2d(1)
+        if args.nodoublefc is True:
+            model.fc = nn.Linear(in_features=model.fc.in_features, out_features=37)
+        else:
+            model.fc = nn.Sequential(nn.Linear(in_features=model.fc.in_features, out_features=1024),
+                                     nn.ReLU(), nn.Linear(in_features=1024, out_features=37))  # change dis shit
+    elif args.architect == 'mobilenet':
+        model = mobilenetv2()
+        model.load_state_dict(torch.load('./mobilenetv2/pretrained/mobilenetv2-36f4e720.pth'))
+        model.avgpool = nn.AdaptiveAvgPool2d(1)
+        if args.nodoublefc is True:
+            model.classifier = nn.Linear(in_features=model.classifier.in_features, out_features=37)
+        else:
+            model.classifier = nn.Sequential(nn.Linear(in_features=model.fc.in_features, out_features=1024),
+                                             nn.ReLU(), nn.Linear(in_features=1024, out_features=37))  # change dis shit
+    elif args.architect in pretrainedmodels.__dict__: # no blabla fully conv for these models
+        model = pretrainedmodels.__dict__[args.architect](num_classes=1000, pretrained='imagenet')
+        load_img = utils.LoadImage()
+        tf_img = utils.TransformImage(model)
     else:
         raise 'no known architecture %s'%args.architect
     filename = '%s.checkpoint.pth.tar'%(args.tag)
@@ -154,6 +169,7 @@ def write_to_board(writer, collector, it, dataset, curr_batch,  stage='train'):
 def evaluate():
     output_file = 'answer_%s.csv'%args.tag
     model, _, _ = load_model()
+    model.eval()
     dataset_args={}
     if args.context:
         dataset_args.update(dict(mask_detection=True, boarder_ratio=5, patch_size=224))
@@ -184,8 +200,10 @@ def evaluate():
         writer.add_image('Test/images', grid, it)
         collector.save(output_file)
 
+
 def train():
     model, checkpoint, filename = load_model()
+    model.train()
     if args.loss == 'RankLoss':
         print 'starting RankLoss'
         criterion = RankLoss()
@@ -275,6 +293,7 @@ def train():
             write_to_board(writer, collector, epoch, val_dataset, curr_batch, stage='val')
             model.train()
     print('Finished ')
+
 
 if __name__=='__main__':
     if args.evaluate:
