@@ -35,6 +35,7 @@ parser.add_argument('--print-freq', '-p', default=10, type=int, metavar='N', hel
 parser.add_argument('--resume', action='store_false')
 parser.add_argument('-e', '--evaluate', dest='evaluate', action='store_true', help='evaluate model on test set')
 parser.add_argument('--pretrained', dest='pretrained', action='store_false', help='use pre-trained model')
+parser.add_argument('--no_augment', action='store_true', help='disable data augmentations')
 parser.add_argument('--freeze', dest='freeze', default=0, type=int, help='number of childern to freeze for base model')
 parser.add_argument('--weighted-loss', dest='weighted_loss', action='store_true', help='use weights in log loss')
 parser.add_argument('--weighted-sample', dest='weighted_sample', action='store_true', help='use weights in log loss')
@@ -137,6 +138,8 @@ def init_dataset():
         dataset_args.update(dict(normalize_size=True))
     if args.normalize_rotation:
         dataset_args.update(dict(normalize_rotation=True))
+    if args.no_augment is True:
+        dataset_args.update(dict(augment=False))
 
     if args.no_split:
         train_dataset = MafatDataset('data/train.csv', 'data/answer.csv', 'data/training imagery', args.preload,**dataset_args)
