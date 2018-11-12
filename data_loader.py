@@ -306,7 +306,7 @@ class MafatDataset(Dataset):
 def create_train_val_dataset(csv_file_name, answer_csv, imfolder, split=0.8, image_group_file=None, augment=True,**kwargs):
     if image_group_file is None:
         train = MafatDataset(csv_file_name, answer_csv, 'data/training imagery', start=0, end=0.8, augment=augment, **kwargs)
-        val =  MafatDataset(csv_file_name, answer_csv , 'data/training imagery', start=0.8, end=1, augment=False, **kwargs)
+        val = MafatDataset(csv_file_name, answer_csv , 'data/training imagery', start=0.8, end=1, augment=False, **kwargs)
         return train, val
     im_groups = yaml.load(open(image_group_file))
     all_ids=np.hstack(im_groups)

@@ -96,6 +96,12 @@ def load_model():
         else:
             model.fc = nn.Sequential(nn.Linear(in_features=model.fc.in_features, out_features=1024),
                                      nn.ReLU(), nn.Linear(in_features=1024, out_features=37))  # change dis shit
+    elif args.architect == 'squeezenet':
+        model = models.squeezenet1_1(pretrained=True)
+        model.classifier = nn.Sequential([nn.Dropout(p=0.5),
+                                          nn.Conv2d(512, 37, kernel_size=(1, 1), stride=(1, 1)),
+                                          nn.ReLU(inplace=True),
+                                          nn.AdaptiveAvgPool2d(1)])
     elif args.architect == 'mobilenet':
         model = mobilenetv2()
         model.load_state_dict(torch.load('./mobilenetv2/pretrained/mobilenetv2-36f4e720.pth'))
